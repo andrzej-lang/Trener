@@ -257,6 +257,7 @@ nav.tabs.six button{font-size:10.5px;padding-inline:0}
 @media (max-width:420px){.goalrow{grid-template-columns:repeat(3,1fr)}.goalrow .gk{grid-column:1/-1}}
 .goalrow > div{background:var(--sunk);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
 .goalrow .gk{background:var(--good-soft)}
+.updbar{position:fixed;left:12px;right:12px;top:calc(env(safe-area-inset-top) + 64px);z-index:60;display:flex;gap:10px;align-items:center;justify-content:space-between;background:var(--surface,#fff);border:2px solid var(--good);border-radius:14px;padding:10px 12px;box-shadow:0 8px 24px rgba(0,0,0,.18);font-weight:600}
 .goalrow b{font-family:var(--f-display);font-weight:700;font-size:34px;line-height:1;color:var(--good);white-space:nowrap}
 .goalrow .gk b{font-size:44px}
 .goalrow small{font-size:12px;color:var(--muted)}
@@ -1328,6 +1329,18 @@ function fsAutoSync(){
   if(st.lastSync && Date.now()-new Date(st.lastSync).getTime() < 30*60000) return;
   G.fsBusy=true; fsCall('sync').catch(()=>{}).finally(()=>{ G.fsBusy=false; sync(); });
 }
+const BUILD = '2026-11-15b';
+let updShown=false;
+async function checkUpdate(){
+  if(updShown) return;
+  try{ const r=await fetch(location.pathname+'?v='+Date.now(),{cache:'no-store'}); const t=await r.text();
+    const m=t.match(/const BUILD = '([^']+)'/); if(m && m[1]!==BUILD){ updShown=true;
+      const d=document.createElement('div'); d.className='updbar';
+      d.innerHTML='<span>Jest nowa wersja aplikacji.</span><button class="primary" style="min-height:38px;padding:0 14px">Odśwież</button>';
+      d.querySelector('button').onclick=()=>{ location.reload(); }; document.body.appendChild(d); } }catch(e){}
+}
+setTimeout(checkUpdate, 4000); setInterval(()=>{ if(!document.hidden) checkUpdate(); }, 300000);
+document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkUpdate(); });
 const FS_ENABLED = true;
 function vFitatu(){
   if(!FS_ENABLED && !((prof()&&prof().fatsecret)||{}).connected) return '';
