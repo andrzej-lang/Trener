@@ -1243,7 +1243,7 @@ function fsAutoSync(){
   if(st.lastSync && Date.now()-new Date(st.lastSync).getTime() < 30*60000) return;
   G.fsBusy=true; fsCall('sync').catch(()=>{}).finally(()=>{ G.fsBusy=false; sync(); });
 }
-const FS_ENABLED = false; /* FatSecret: włączyć po dokończeniu testów połączenia */
+const FS_ENABLED = true;
 function vFitatu(){
   if(!FS_ENABLED && !((prof()&&prof().fatsecret)||{}).connected) return '';
   const st=(prof()&&prof().fatsecret)||{};
