@@ -1195,6 +1195,7 @@ function vDieta(){
       <label class="field"><span class="label">kcal</span><input class="inp num" type="number" inputmode="numeric" id="f-kcal" data-act="fval" data-k="kcal" value="${cur.kcal??''}"></label>
       ${MACROS.map(m=>`<label class="field"><span class="label"><span>${m.n}</span><span>g</span></span><input class="inp num" type="number" inputmode="decimal" id="f-${m.k}" data-act="fval" data-k="${m.k}" value="${cur[m.k]??''}"></label>`).join('')}
     </div>
+    ${cur.by==='auto'?'<p class="note">Dane z Fitatu (import automatyczny). Możesz je poprawić ręcznie, ale następny import tego dnia je nadpisze.</p>':''}
     <button class="primary" data-act="fsave">Zapisz dzień</button>
     ${!T.kcal ? `<p class="note">${coach?'Ustaw cele dzienne w zakładce Plan, żeby widzieć postęp.':'Trener nie ustawił jeszcze celów dziennych.'}</p>`:''}
   </section>`;
@@ -1220,10 +1221,31 @@ function vDieta(){
     const pts = days.slice(0,60).reverse().filter(x=>x.kcal).map(x=>({date:x.d, y:x.kcal}));
     if(pts.length>1) h += `<section class="card"><h3>Kalorie — ostatnie dni</h3>${chart(pts,'kcal')}</section>`;
     h += `<section class="card"><h3>Historia</h3><div class="twrap"><table class="tbl"><thead><tr><th>Dzień</th><th>kcal</th>${MACROS.map(m=>`<th>${m.n}</th>`).join('')}</tr></thead><tbody>
-      ${days.slice(0,30).map(x=>`<tr><td><button class="linkbtn" data-act="fpick" data-d="${x.d}">${fmtD(x.d)}</button></td><td>${x.kcal!=null?Math.round(x.kcal):'—'}</td>${MACROS.map(m=>`<td>${x[m.k]!=null?fmtN(x[m.k]):'—'}</td>`).join('')}</tr>`).join('')}
+      ${days.slice(0,30).map(x=>`<tr><td><button class="linkbtn" data-act="fpick" data-d="${x.d}">${fmtD(x.d)}</button>${x.by==='auto'?'<span class="dlt">Fitatu</span>':''}</td><td>${x.kcal!=null?Math.round(x.kcal):'—'}</td>${MACROS.map(m=>`<td>${x[m.k]!=null?fmtN(x[m.k]):'—'}</td>`).join('')}</tr>`).join('')}
     </tbody></table></div></section>`;
-  } else h += `<p class="empty">Nie ma jeszcze wpisów. Po każdym dniu wpisz kalorie i makro, np. z podsumowania dnia w aplikacji do liczenia kalorii.</p>`;
+  } else h += `<p class="empty">Nie ma jeszcze wpisów. Po każdym dniu wpisz kalorie i makro albo włącz automatyczny import z Fitatu poniżej.</p>`;
+  h += vFitatu();
   return h;
+}
+const SHORTCUT_URL = '';
+function vFitatu(){
+  const auto = Object.values(G.data.food).some(m=>Object.values(m.days||{}).some(d=>d.by==='auto'));
+  if(G.role==='coach' && !G.preview){
+    return `<section class="card"><h3>Import z Fitatu</h3><p class="note">${auto?'Ten podopieczny ma włączony automatyczny import z Fitatu. Wpisy z importu mają w historii dopisek „Fitatu”.':'Podopieczny może włączyć automatyczny import z Fitatu w swojej aplikacji (Dieta, na dole). Działa na iPhonie.'}</p></section>`;
+  }
+  const code = AUTH && AUTH.token || '';
+  return `<section class="card"><h3>Automatyczny import z Fitatu</h3>
+    ${auto?'<p class="note"><b>Import działa.</b> Dane z Fitatu przychodzą codziennie wieczorem i mają w historii dopisek „Fitatu”.</p>':''}
+    <p class="note">Działa na iPhonie: Fitatu zapisuje kalorie i makro w aplikacji Zdrowie, a skrót raz dziennie przesyła je tutaj. Konfiguracja zajmuje około 3 minut i robi się ją raz.</p>
+    <ol class="note" style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px">
+      <li>W Fitatu w ustawieniach połącz aplikację z <b>Apple Zdrowie</b> i zezwól na zapis kalorii, białka, węglowodanów i tłuszczów.</li>
+      <li>${SHORTCUT_URL?`Zainstaluj skrót: <a href="${SHORTCUT_URL}" style="color:var(--accent);font-weight:600">Dodaj skrót „Fitatu → Trening”</a>.`:'Skrót do zainstalowania udostępni Ci trener.'} Przy instalacji wklej swój kod importu (poniżej).</li>
+      <li>W aplikacji Skróty: Automatyzacja → Nowa automatyzacja → <b>Pora dnia</b>, np. 23:30, codziennie → <b>Uruchom natychmiast</b> → wybierz skrót „Fitatu → Trening”.</li>
+      <li>Przy pierwszym uruchomieniu zezwól skrótowi na odczyt danych ze Zdrowia.</li>
+    </ol>
+    <label class="field"><span class="label">Twój kod importu</span><input class="inp" id="fit-code" readonly value="${esc(code)}" style="font-size:14px"></label>
+    <button class="ghost acc" data-act="fit-copy" style="align-self:flex-start">Kopiuj kod</button>
+    <p class="note">Kod działa jak Twój osobisty link. Nie przekazuj go innym.</p></section>`;
 }
 
 /* ---------- chart ---------- */
@@ -1424,6 +1446,7 @@ view.addEventListener('click', async e=>{
   if(a==='bk-go'){ if(!G.cal.busy) await bookSlot(); return; }
   if(a==='bk-cancel'){ if(G.confirm==='bk-'+b.dataset.id){ G.confirm=null; await cancelBooking(b.dataset.id); } else { G.confirm='bk-'+b.dataset.id; render(); } return; }
   if(a==='open-me'){ openMine(); return; }
+  if(a==='fit-copy'){ const v=AUTH&&AUTH.token||''; try{ await navigator.clipboard.writeText(v); toast('Skopiowano kod'); }catch(e){ const el=document.getElementById('fit-code'); el.focus(); el.select(); toast('Zaznaczono kod, skopiuj go'); } return; }
   if(a==='link-show' || a==='link-renew'){
     if(a==='link-renew' && G.confirm!=='link-renew'){ G.confirm='link-renew'; render(); return; }
     G.confirm=null;
