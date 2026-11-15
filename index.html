@@ -444,7 +444,7 @@ const STORE = new Map();
 let syncSince = null, syncing = false, syncTimer = null;
 const base = cid => 'clients/' + cid;
 function derive(){
-  const prof={}, fin={}; let tpl=null, cfg=null;
+  const prof={}, fin={}; let tpl=null, cfg=null, gconf=null;
   const data={sessions:{}, meas:{}, food:{}, bookings:{}};
   for(const [p,d] of STORE){
     const seg=p.split('/');
@@ -453,8 +453,10 @@ function derive(){
     else if(seg[0]==='fin' && seg.length===2) fin[seg[1]]=d;
     else if(p==='lib/template') tpl=d;
     else if(p==='lib/config') cfg=d;
+    else if(p==='lib/google') gconf=d;
   }
   G.profiles=prof; G.fin=fin; G.template=tpl; G.config=cfg||{coaches:[]}; G.data=data;
+  G.gconf=gconf; G.mcp = (G.role==='coach' && gconf && gconf.clientId) ? GCAL : null;
 }
 let pendingRender=false;
 function scheduleRender(){
@@ -689,6 +691,14 @@ function vCoachList(){
   h += `<section class="card"><h3>Dodaj podopiecznego</h3>
     <p class="note">Po dodaniu wejdź w tę osobę, a potem w zakładkę Plan: znajdziesz tam jej osobisty link. Podopieczny otwiera go na telefonie, bez konta i logowania. Możesz też nie wysyłać linku i sam wpisywać wszystkie dane.</p>
     <div class="ed-row"><input class="inp" id="new-client" placeholder="Imię i nazwisko" aria-label="Imię i nazwisko"><button class="ghost acc" data-act="add-client">Dodaj</button></div></section>`;
+  const gc = G.gconf && G.gconf.clientId;
+  h += gc ? `<section class="card"><h3>Kalendarz Google</h3>
+      <p class="note">Skonfigurowany. ${gTokenValid()?'Ten telefon jest połączony z Kalendarzem Google.':'Połączenie nastąpi po stuknięciu „Kalendarz”.'}</p>
+      <div class="ed-row">${gTokenValid()?'<button class="ghost" data-act="g-logout">Wyloguj z Google na tym telefonie</button>':''}<span style="flex:1"></span>
+      <button class="ghost ${G.confirm==='g-reset'?'danger':''}" data-act="g-reset">${G.confirm==='g-reset'?'Na pewno odłączyć?':'Zmień konfigurację'}</button></div></section>`
+    : `<section class="card"><h3>Kalendarz Google</h3>
+      <p class="note">Wklej identyfikator klienta OAuth z Google Cloud (kończy się na .apps.googleusercontent.com). Instrukcję dostałeś razem z aplikacją.</p>
+      <div class="ed-row"><input class="inp" id="g-client" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="123…-abc….apps.googleusercontent.com" aria-label="Identyfikator klienta Google"><button class="ghost acc" data-act="g-save">Zapisz</button></div></section>`;
   h += `<section class="card"><h3>Ustawienia trenera</h3>
     <div class="ed-row"><input class="inp" id="new-code" type="password" autocomplete="new-password" placeholder="Nowy kod trenera (min. 8 znaków)" aria-label="Nowy kod trenera"><button class="ghost acc" data-act="code-change">Zmień kod</button></div>
     <p class="note">Kod znają tylko trenerzy. Po zmianie trzeba go wpisać ponownie na każdym telefonie.</p>
@@ -861,16 +871,17 @@ function vUpcoming(){
 }
 function calErr(e){
   const c = e && e.code;
-  if(c==='server_not_connected' || c==='server_not_found') return 'Kalendarz Google nie jest podłączony do Twojego konta Claude. Dodaj go w claude.ai → Ustawienia → Konektory → Google Calendar, a potem stuknij „Odśwież”.';
-  if(c==='needs_reauth') return 'Połączenie z Kalendarzem Google wygasło. Połącz go ponownie w claude.ai → Ustawienia → Konektory, a potem stuknij „Odśwież”.';
-  if(c==='not_in_manifest' || c==='approval_required' || c==='consent_required') return 'Aplikacja nie ma zgody na Twój Kalendarz Google. Stuknij „Odśwież” i zezwól w okienku claude.ai.';
-  if(c==='selection_required') return 'Masz kilka połączeń z Kalendarzem Google. Wybierz jedno w okienku claude.ai i stuknij „Odśwież”.';
-  if(c==='blocked_by_policy') return 'Twoja organizacja blokuje to narzędzie Kalendarza Google.';
+  if(c==='needs_connect') return 'Połącz aplikację ze swoim Kalendarzem Google przyciskiem poniżej.';
+  if(c==='needs_reauth') return 'Połączenie z Kalendarzem Google wygasło. Połącz ponownie przyciskiem poniżej.';
+  if(c==='popup_blocked') return 'Telefon zablokował okno logowania Google. Stuknij przycisk poniżej jeszcze raz. Jeśli to nie pomoże, otwórz aplikację w Safari albo Chrome zamiast z ikony.';
+  if(c==='access_denied') return 'Nie udzielono zgody na dostęp do kalendarza. Stuknij przycisk poniżej, żeby spróbować ponownie.';
+  if(c==='config') return 'Identyfikator klienta Google jest nieprawidłowy albo adres strony nie jest dodany w Google Cloud. Sprawdź ustawienia kalendarza na liście podopiecznych.';
+  if(c==='offline') return 'Brak internetu.';
   if(c==='server_unavailable' || c==='rate_limited') return 'Kalendarz Google chwilowo nie odpowiada. Spróbuj za chwilę.';
   if(c==='tool_error') return 'Kalendarz Google zgłosił błąd: ' + String(e.message||'').slice(0,160);
-  if(c==='not_granted' || c==='capability_disabled' || c==='capability_removed') return 'Kalendarz działa tylko w aplikacji otwartej na claude.ai.';
   return 'Nie udało się połączyć z Kalendarzem Google. Stuknij „Odśwież”.';
 }
+const NEEDS_BTN = c => ['needs_connect','needs_reauth','popup_blocked','access_denied'].includes(c);
 function parseEvents(payload){
   const list = (payload && (payload.events || payload.items)) || [];
   return list.map(ev=>{
@@ -921,14 +932,14 @@ function vCal(){
   if(!C.week){ C.week=weekDates(today())[0]; C.day=today(); }
   const days=weekDates(C.week);
   if(!days.includes(C.day)) C.day=days[0];
-  if(!G.mcp) return `<section class="card"><h2>Kalendarz Google</h2><p>Kalendarz działa, gdy aplikacja jest otwarta na claude.ai, na koncie trenera z podłączonym Kalendarzem Google (claude.ai → Ustawienia → Konektory → Google Calendar).</p></section>`;
+  if(!G.mcp) return `<section class="card"><h2>Kalendarz Google</h2><p>Kalendarz nie jest jeszcze skonfigurowany. Wróć do listy podopiecznych i uzupełnij sekcję „Kalendarz Google”.</p></section>`;
   let h = `<section class="card">
     <div class="card-head" style="align-items:center"><button class="ghost" data-act="cal-prev" aria-label="Poprzedni tydzień">←</button>
       <h2 class="num">${fmtD(days[0])} – ${fmtD(days[6])}</h2><button class="ghost" data-act="cal-next" aria-label="Następny tydzień">→</button></div>
     <div class="daychips">${days.map((d,i)=>{ const n=(C.loadedWeek===C.week?dayEvents(d).timed.filter(x=>!x.declined).length:null); return `<button class="chip" data-act="cal-day" data-d="${d}" aria-pressed="${d===C.day}"><span>${WD[i]}</span><b class="num">${+d.slice(8)}</b><i class="num">${n==null?'&nbsp;':n?n+' wyd.':'wolne'}</i></button>`; }).join('')}</div>
     <div class="ed-row"><span class="note" style="flex:1">${C.status==='loading'?'Wczytuję Twój kalendarz…':C.status==='ok'&&C.loadedAt?`Stan z ${hm(C.loadedAt)}. Zielone okienka są wolne.`:''}</span>
       <button class="ghost acc" data-act="cal-refresh" ${C.status==='loading'?'disabled':''}>Odśwież</button></div>
-    ${C.status==='error'?`<div class="errbox">${esc(calErr(C.err))}</div>`:''}
+    ${C.status==='error'?`<div class="errbox">${esc(calErr(C.err))}</div>${NEEDS_BTN(C.err&&C.err.code)?'<button class="primary" data-act="g-connect">Połącz z Kalendarzem Google</button>':''}`:''}
   </section>`;
 
   if(C.loadedWeek===C.week && (C.status==='ok' || C.status==='loading')){
@@ -1396,7 +1407,15 @@ view.addEventListener('click', async e=>{
     try{ await finSave(G.cid,f); toast('Usunięto'); }catch(e){} return; }
   if(a==='cal-open'){ G.calFrom = G.coachScreen==='client' ? G.cid : null; G.cal.pre = b.dataset.pre || null; G.cal.book=null; G.coachScreen='cal';
     if(!G.cal.week){ G.cal.week=weekDates(today())[0]; G.cal.day=today(); }
-    render(); window.scrollTo(0,0); if(G.cal.loadedWeek!==G.cal.week || G.cal.status!=='ok') loadCal(); return; }
+    render(); window.scrollTo(0,0);
+    if(!gTokenValid()){ try{ await gConnect(); }catch(err){ G.cal.status='error'; G.cal.err=err; render(); return; } }
+    if(G.cal.loadedWeek!==G.cal.week || G.cal.status!=='ok') loadCal(); return; }
+  if(a==='g-connect'){ try{ await gConnect(true); loadCal(); }catch(err){ G.cal.status='error'; G.cal.err=err; render(); } return; }
+  if(a==='g-save'){ const v=(document.getElementById('g-client').value||'').trim();
+    if(!/^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$/.test(v)){ toast('To nie wygląda na identyfikator klienta Google'); return; }
+    try{ await setDoc('lib/google', {clientId:v}); gForget(); toast('Zapisano. Stuknij „Kalendarz”, żeby się połączyć'); }catch(e){} return; }
+  if(a==='g-reset'){ if(G.confirm!=='g-reset'){ G.confirm='g-reset'; render(); return; } G.confirm=null; gForget(); try{ await delDoc('lib/google'); toast('Odłączono kalendarz'); }catch(e){} return; }
+  if(a==='g-logout'){ gForget(); toast('Wylogowano z Google na tym telefonie'); render(); return; }
   if(a==='cal-prev'||a==='cal-next'){ const d=new Date(G.cal.week+'T12:00:00'); d.setDate(d.getDate()+(a==='cal-next'?7:-7)); G.cal.week=isoOf(d); G.cal.day=G.cal.week; G.cal.book=null; loadCal(); return; }
   if(a==='cal-day'){ G.cal.day=b.dataset.d; G.cal.book=null; render(); return; }
   if(a==='cal-refresh'){ loadCal(); return; }
@@ -1504,6 +1523,64 @@ async function saveSession(){
 /* ================= boot ================= */
 const LS_COACH='trenerApp.coach', LS_TOKEN='trenerApp.token';
 function appUrl(){ return location.origin + location.pathname; }
+/* ---------- Google Calendar (browser OAuth) ---------- */
+const GSCOPE = 'https://www.googleapis.com/auth/calendar.events';
+const LS_GTOK = 'trenerApp.gtok';
+let gTok = null; try{ gTok = JSON.parse(localStorage.getItem(LS_GTOK)||'null'); }catch(e){}
+function gTokenValid(){ return !!(gTok && gTok.exp > Date.now()+60000 && G.gconf && gTok.cid===G.gconf.clientId); }
+function gForget(){ try{ if(gTok && window.google && google.accounts) google.accounts.oauth2.revoke(gTok.t, ()=>{}); }catch(e){} gTok=null; try{ localStorage.removeItem(LS_GTOK); }catch(e){} }
+let gisLoading=null;
+function loadGis(){
+  if(window.google && google.accounts && google.accounts.oauth2) return Promise.resolve();
+  if(gisLoading) return gisLoading;
+  gisLoading = new Promise((res,rej)=>{ const sc=document.createElement('script'); sc.src='https://accounts.google.com/gsi/client'; sc.async=true; sc.onload=()=>res(); sc.onerror=()=>{ gisLoading=null; rej(Object.assign(new Error('gis'),{code:'offline'})); }; document.head.appendChild(sc); });
+  return gisLoading;
+}
+async function gConnect(forceConsent){
+  if(!G.gconf || !G.gconf.clientId) throw Object.assign(new Error('cfg'),{code:'config'});
+  await loadGis();
+  return new Promise((res,rej)=>{
+    let done=false;
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: G.gconf.clientId, scope: GSCOPE,
+      callback: r=>{ done=true;
+        if(r && r.access_token){ gTok={t:r.access_token, exp:Date.now()+(+r.expires_in||3600)*1000, cid:G.gconf.clientId}; try{ localStorage.setItem(LS_GTOK, JSON.stringify(gTok)); }catch(e){} res(); }
+        else rej(Object.assign(new Error('denied'),{code: r && r.error==='access_denied' ? 'access_denied' : 'config'})); },
+      error_callback: err=>{ done=true; rej(Object.assign(new Error(err && err.type || 'popup'),{code: err && err.type==='popup_closed' ? 'access_denied' : 'popup_blocked'})); }
+    });
+    try{ client.requestAccessToken({prompt: forceConsent ? 'consent' : ''}); }catch(e){ rej(Object.assign(e,{code:'popup_blocked'})); }
+  });
+}
+async function gFetch(method, path, body){
+  if(!gTokenValid()) throw Object.assign(new Error('auth'),{code: gTok ? 'needs_reauth' : 'needs_connect'});
+  let r;
+  try{ r = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/'+path, {method, headers:Object.assign({'Authorization':'Bearer '+gTok.t}, body?{'Content-Type':'application/json'}:{}), body: body?JSON.stringify(body):undefined}); }
+  catch(e){ throw Object.assign(new Error('offline'),{code:'offline'}); }
+  if(r.status===401){ gTok=null; try{ localStorage.removeItem(LS_GTOK); }catch(e){} throw Object.assign(new Error('auth'),{code:'needs_reauth'}); }
+  if(r.status===204 || r.status===410) return null;
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok){ const m=(j.error&&j.error.message)||r.statusText; throw Object.assign(new Error(m),{code: r.status>=500||r.status===429 ? 'server_unavailable' : r.status===403&&/insufficient|scope/i.test(m) ? 'needs_reauth' : 'tool_error'}); }
+  return j;
+}
+const TZ = (()=>{ try{ return Intl.DateTimeFormat().resolvedOptions().timeZone || 'Europe/Warsaw'; }catch(e){ return 'Europe/Warsaw'; } })();
+const toIso = s => fromLocal(s).toISOString();
+const GCAL = { async callTool(server, tool, input){
+  if(tool==='list_events'){
+    const q = new URLSearchParams({timeMin:toIso(input.startTime), timeMax:toIso(input.endTime), singleEvents:'true', orderBy:'startTime', maxResults:'250'});
+    if(input.pageToken) q.set('pageToken', input.pageToken);
+    const j = await gFetch('GET', 'events?'+q.toString());
+    return {payload:{events:(j&&j.items)||[], nextPageToken:j&&j.nextPageToken}};
+  }
+  if(tool==='create_event'){
+    const ev = {summary:input.summary, description:input.description||'', start:{dateTime:input.startTime, timeZone:TZ}, end:{dateTime:input.endTime, timeZone:TZ}, guestsCanSeeOtherGuests:false, guestsCanInviteOthers:false};
+    if(input.location) ev.location=input.location;
+    if(input.attendees) ev.attendees=input.attendees.map(a=>({email:a.email, displayName:a.displayName}));
+    const j = await gFetch('POST', 'events?sendUpdates=all', ev);
+    return {payload:j};
+  }
+  if(tool==='delete_event'){ await gFetch('DELETE', 'events/'+encodeURIComponent(input.eventId)+'?sendUpdates=all'); return {payload:null}; }
+  throw Object.assign(new Error('tool'),{code:'tool_error'});
+} };
 G.assets = { async upload(blob){
   const dataUrl = await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(blob); });
   const id = await rpc('app_photo_put', {auth:AUTH, body:dataUrl}); PHC[id]=dataUrl; return {url:'ph:'+id};
@@ -1526,6 +1603,7 @@ async function enterCoach(code){
   G.role='coach'; G.coachScreen='list'; G.loginErr='';
   view.innerHTML='<div class="center">Wczytuję podopiecznych…</div>'; renderChrome();
   await sync(); derive(); render(); startSync();
+  if(G.gconf && G.gconf.clientId) loadGis().catch(()=>{});
 }
 async function enterClient(token){
   AUTH={token};
