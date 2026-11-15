@@ -1223,7 +1223,7 @@ function vDieta(){
     h += `<section class="card"><h3>Historia</h3><div class="twrap"><table class="tbl"><thead><tr><th>Dzień</th><th>kcal</th>${MACROS.map(m=>`<th>${m.n}</th>`).join('')}</tr></thead><tbody>
       ${days.slice(0,30).map(x=>`<tr><td><button class="linkbtn" data-act="fpick" data-d="${x.d}">${fmtD(x.d)}</button>${x.by==='fatsecret'?'<span class="dlt">FatSecret</span>':''}</td><td>${x.kcal!=null?Math.round(x.kcal):'—'}</td>${MACROS.map(m=>`<td>${x[m.k]!=null?fmtN(x[m.k]):'—'}</td>`).join('')}</tr>`).join('')}
     </tbody></table></div></section>`;
-  } else h += `<p class="empty">Nie ma jeszcze wpisów. Wpisz kalorie i makro powyżej albo połącz FatSecret poniżej.</p>`;
+  } else h += `<p class="empty">Nie ma jeszcze wpisów. Wpisz kalorie i makro powyżej, np. raz dziennie wieczorem.</p>`;
   h += vFitatu();
   return h;
 }
@@ -1243,7 +1243,9 @@ function fsAutoSync(){
   if(st.lastSync && Date.now()-new Date(st.lastSync).getTime() < 30*60000) return;
   G.fsBusy=true; fsCall('sync').catch(()=>{}).finally(()=>{ G.fsBusy=false; sync(); });
 }
+const FS_ENABLED = false; /* FatSecret: włączyć po dokończeniu testów połączenia */
 function vFitatu(){
+  if(!FS_ENABLED && !((prof()&&prof().fatsecret)||{}).connected) return '';
   const st=(prof()&&prof().fatsecret)||{};
   const ago = st.lastSync ? (()=>{ const d=new Date(st.lastSync); return (isoOf(d)===today()?'dziś ':fmtD(isoOf(d))+' ')+hm(d); })() : null;
   const attrib = '<p class="note">Dane żywieniowe: <a href="https://www.fatsecret.com" target="_blank" rel="noopener" style="color:var(--accent)">Powered by fatsecret</a></p>';
