@@ -833,7 +833,8 @@ function vPlan(){
   h += `<section class="card"><h2>Cele dzienne diety</h2><div class="grid4">
     <label class="field"><span class="label">kcal</span><input class="inp num" id="pt-kcal" type="number" inputmode="numeric" data-act="pt" data-k="kcal" value="${T.kcal??''}"></label>
     ${MACROS.map(m=>`<label class="field"><span class="label"><span>${m.n}</span><span>g</span></span><input class="inp num" id="pt-${m.k}" type="number" inputmode="numeric" data-act="pt" data-k="${m.k}" value="${T[m.k]??''}"></label>`).join('')}
-  </div></section>`;
+  </div><p class="note" id="pt-hint" aria-live="polite">${macroHint(macroCheck(T, false))}</p>
+  <p class="note">Makro musi zgadzać się z kaloriami: 1 g białka i węglowodanów to 4 kcal, 1 g tłuszczu to 9 kcal (tolerancja 5%). Jeśli zostawisz kcal puste, policzę je z makro.</p></section>`;
 
   h += `<div class="savebar"><button class="ghost" data-act="plan-reset" ${G.editDirty?'':'disabled'}>Cofnij zmiany</button><button class="primary" data-act="plan-save">Zapisz plan</button></div>`;
 
@@ -1043,6 +1044,32 @@ async function cancelBooking(id){
   toast(b.eventId ? 'Odwołano. Podopieczny dostanie powiadomienie' : 'Usunięto z listy');
 }
 
+/* ---------- macro check: 1 g białka/węglowodanów = 4 kcal, 1 g tłuszczu = 9 kcal ---------- */
+function macroCheck(v, needAll){
+  const has = k => v[k]!=null && v[k]!=='' && !isNaN(v[k]);
+  const given = ['p','c','f'].filter(has);
+  const sum = Math.round((has('p')?4*v.p:0) + (has('c')?4*v.c:0) + (has('f')?9*v.f:0));
+  const kcal = has('kcal') ? +v.kcal : null;
+  const tol = kcal ? Math.max(30, Math.round(kcal*0.05)) : 0;
+  const r = {sum, kcal, tol, given:given.length, ok:true, msg:'', auto:null};
+  if(['kcal','p','c','f'].some(k=>has(k) && +v[k]<0)){ r.ok=false; r.msg='Wartości nie mogą być ujemne.'; return r; }
+  if(needAll && given.length>0 && given.length<3){ r.ok=false; r.msg='Wpisz wszystkie trzy makroskładniki albo żaden.'; return r; }
+  if(kcal==null){ if(given.length===3) r.auto=sum; return r; }
+  if(sum > kcal + tol){ r.ok=false; r.msg=`Makroskładniki dają ${sum} kcal, a to więcej niż ${kcal} kcal. Zmniejsz makro albo zwiększ kalorie.`; return r; }
+  if(given.length===3 && sum < kcal - tol){ r.ok=false; r.msg=`Makroskładniki dają tylko ${sum} kcal, a kalorie to ${kcal} kcal. Różnica może wynosić najwyżej ${tol} kcal.`; return r; }
+  return r;
+}
+function macroHint(r){
+  if(!r.given) return '';
+  const cls = r.ok ? '' : ' style="color:var(--bad)"';
+  return `<span${cls}>Makro: 4×B + 4×W + 9×T = <b class="num">${r.sum} kcal</b>${r.kcal?` (kalorie: ${r.kcal})`:''}${r.ok?'':` · ${esc(r.msg)}`}</span>`;
+}
+function readMacros(prefix){ const v={}; ['kcal','p','c','f'].forEach(k=>{ const el=document.getElementById(prefix+k); const x=el?num(el.value):null; if(x!=null) v[k]=x; }); return v; }
+function paintMacroHint(prefix, boxId, needAll){
+  const box=document.getElementById(boxId); if(!box) return;
+  box.innerHTML = macroHint(macroCheck(readMacros(prefix), needAll));
+}
+
 /* ---------- finance ---------- */
 const zl = n => (Math.round((+n||0)*100)/100).toLocaleString('pl-PL',{minimumFractionDigits:0, maximumFractionDigits:2}) + ' zł';
 function finStatus(cid){
@@ -1195,6 +1222,7 @@ function vDieta(){
       <label class="field"><span class="label">kcal</span><input class="inp num" type="number" inputmode="numeric" id="f-kcal" data-act="fval" data-k="kcal" value="${cur.kcal??''}"></label>
       ${MACROS.map(m=>`<label class="field"><span class="label"><span>${m.n}</span><span>g</span></span><input class="inp num" type="number" inputmode="decimal" id="f-${m.k}" data-act="fval" data-k="${m.k}" value="${cur[m.k]??''}"></label>`).join('')}
     </div>
+    <p class="note" id="f-hint" aria-live="polite">${macroHint(macroCheck(cur, true))}</p>
     ${cur.by==='fatsecret'?'<p class="note">Dane z FatSecret. Możesz je poprawić ręcznie, ale następne pobranie z FatSecret może je nadpisać.</p>':''}
     <button class="primary" data-act="fsave">Zapisz dzień</button>
     ${!T.kcal ? `<p class="note">${coach?'Ustaw cele dzienne w zakładce Plan, żeby widzieć postęp.':'Trener nie ustawił jeszcze celów dziennych.'}</p>`:''}
@@ -1389,7 +1417,8 @@ view.addEventListener('input', e=>{
   else if(a==='pe-max'){ const v=num(t.value), ex=EP().workouts[wi].ex[i]; if(v && v>=2) ex.max=Math.min(100,Math.round(v)); else delete ex.max; markDirty(); }
   else if(a==='pe-rest'){ const v=num(t.value), ex=EP().workouts[wi].ex[i]; if(v && v>=10) ex.rest=Math.min(900,Math.round(v)); else delete ex.rest; markDirty(); }
   else if(a==='pe-target'){ EP().workouts[wi].ex[i].target=t.value.replace(/\s*-\s*/,'–'); markDirty(); }
-  else if(a==='pt'){ const v=num(t.value); if(v==null) delete G.editPlan.targets[t.dataset.k]; else G.editPlan.targets[t.dataset.k]=v; markDirty(); }
+  else if(a==='pt'){ const v=num(t.value); if(v==null) delete G.editPlan.targets[t.dataset.k]; else G.editPlan.targets[t.dataset.k]=v; markDirty(); paintMacroHint('pt-','pt-hint',false); }
+  else if(a==='fval'){ paintMacroHint('f-','f-hint',true); }
 });
 
 view.addEventListener('change', async e=>{
@@ -1512,6 +1541,7 @@ view.addEventListener('click', async e=>{
   if(a==='fsave'){ const date=G.foodDate||today(), v={};
     ['kcal','p','c','f'].forEach(k=>{ const el=document.getElementById('f-'+k); const x=el?num(el.value):null; if(x!=null) v[k]=x; });
     if(!Object.keys(v).length){ toast('Wpisz kalorie albo makro'); return; }
+    { const mc=macroCheck(v, true); if(!mc.ok){ paintMacroHint('f-','f-hint',true); toast(mc.msg); return; } if(mc.auto!=null){ v.kcal=mc.auto; } }
     v.ts=Date.now(); v.by=(G.role==='coach'&&!G.preview)?'coach':'self';
     const mk=date.slice(0,7), cur=clone(G.data.food[mk])||{days:{}}; cur.days=cur.days||{}; cur.days[date]=v;
     try{ await setDoc(base(G.cid)+'/food/'+mk, cur);
@@ -1535,6 +1565,7 @@ view.addEventListener('click', async e=>{
   else if(a==='plan-save'){
     P.warmup.forEach(x=>{ x.name=(x.name||'').trim()||'Ćwiczenie'; });
     P.workouts.forEach(w=>{ w.name=(w.name||'').trim()||'Trening'; w.ex.forEach(x=>{ x.name=(x.name||'').trim()||'Ćwiczenie'; }); });
+    { const T=G.editPlan.targets, mc=macroCheck(T, false); if(!mc.ok){ toast('Cele diety: '+mc.msg); const el=document.getElementById('pt-kcal'); if(el) el.scrollIntoView({block:'center'}); return; } if(mc.auto!=null) T.kcal=mc.auto; }
     const body={plan:clone(P), targets:clone(G.editPlan.targets)};
     try{ await setDoc(base(G.cid), Object.assign(clone(prof()), body)); G.editDirty=false; G.editPlan=null; toast('Plan zapisany'); render(); }catch(e){}
   }
