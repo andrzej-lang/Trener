@@ -1195,7 +1195,7 @@ function vDieta(){
       <label class="field"><span class="label">kcal</span><input class="inp num" type="number" inputmode="numeric" id="f-kcal" data-act="fval" data-k="kcal" value="${cur.kcal??''}"></label>
       ${MACROS.map(m=>`<label class="field"><span class="label"><span>${m.n}</span><span>g</span></span><input class="inp num" type="number" inputmode="decimal" id="f-${m.k}" data-act="fval" data-k="${m.k}" value="${cur[m.k]??''}"></label>`).join('')}
     </div>
-    ${cur.by==='auto'?'<p class="note">Dane z Fitatu (import automatyczny). Możesz je poprawić ręcznie, ale następny import tego dnia je nadpisze.</p>':''}
+    ${cur.by==='fatsecret'?'<p class="note">Dane z FatSecret. Możesz je poprawić ręcznie, ale następne pobranie z FatSecret może je nadpisać.</p>':''}
     <button class="primary" data-act="fsave">Zapisz dzień</button>
     ${!T.kcal ? `<p class="note">${coach?'Ustaw cele dzienne w zakładce Plan, żeby widzieć postęp.':'Trener nie ustawił jeszcze celów dziennych.'}</p>`:''}
   </section>`;
@@ -1221,31 +1221,46 @@ function vDieta(){
     const pts = days.slice(0,60).reverse().filter(x=>x.kcal).map(x=>({date:x.d, y:x.kcal}));
     if(pts.length>1) h += `<section class="card"><h3>Kalorie — ostatnie dni</h3>${chart(pts,'kcal')}</section>`;
     h += `<section class="card"><h3>Historia</h3><div class="twrap"><table class="tbl"><thead><tr><th>Dzień</th><th>kcal</th>${MACROS.map(m=>`<th>${m.n}</th>`).join('')}</tr></thead><tbody>
-      ${days.slice(0,30).map(x=>`<tr><td><button class="linkbtn" data-act="fpick" data-d="${x.d}">${fmtD(x.d)}</button>${x.by==='auto'?'<span class="dlt">Fitatu</span>':''}</td><td>${x.kcal!=null?Math.round(x.kcal):'—'}</td>${MACROS.map(m=>`<td>${x[m.k]!=null?fmtN(x[m.k]):'—'}</td>`).join('')}</tr>`).join('')}
+      ${days.slice(0,30).map(x=>`<tr><td><button class="linkbtn" data-act="fpick" data-d="${x.d}">${fmtD(x.d)}</button>${x.by==='fatsecret'?'<span class="dlt">FatSecret</span>':''}</td><td>${x.kcal!=null?Math.round(x.kcal):'—'}</td>${MACROS.map(m=>`<td>${x[m.k]!=null?fmtN(x[m.k]):'—'}</td>`).join('')}</tr>`).join('')}
     </tbody></table></div></section>`;
-  } else h += `<p class="empty">Nie ma jeszcze wpisów. Po każdym dniu wpisz kalorie i makro albo włącz automatyczny import z Fitatu poniżej.</p>`;
+  } else h += `<p class="empty">Nie ma jeszcze wpisów. Wpisz kalorie i makro powyżej albo połącz FatSecret poniżej.</p>`;
   h += vFitatu();
   return h;
 }
-const SHORTCUT_URL = '';
+const FS_FN = SB + '/functions/v1/fatsecret';
+async function fsCall(action){
+  const r = await fetch(FS_FN+'?a='+action, {method:'POST', headers:{'Content-Type':'application/json','apikey':SBK}, body:JSON.stringify({k:AUTH&&AUTH.token})});
+  const j = await r.json().catch(()=>({}));
+  if(!r.ok || !j.ok) throw Object.assign(new Error(j.error||'error'),{code:j.error||'error'});
+  return j;
+}
+function fsAutoSync(){
+  if(G.role!=='client' || !AUTH || !AUTH.token) return;
+  const st=(prof()&&prof().fatsecret)||{};
+  if(!st.connected || G.fsBusy) return;
+  if(G.fsTried && Date.now()-G.fsTried < 5*60000) return;
+  G.fsTried=Date.now();
+  if(st.lastSync && Date.now()-new Date(st.lastSync).getTime() < 30*60000) return;
+  G.fsBusy=true; fsCall('sync').catch(()=>{}).finally(()=>{ G.fsBusy=false; sync(); });
+}
 function vFitatu(){
-  const auto = Object.values(G.data.food).some(m=>Object.values(m.days||{}).some(d=>d.by==='auto'));
+  const st=(prof()&&prof().fatsecret)||{};
+  const ago = st.lastSync ? (()=>{ const d=new Date(st.lastSync); return (isoOf(d)===today()?'dziś ':fmtD(isoOf(d))+' ')+hm(d); })() : null;
+  const attrib = '<p class="note">Dane żywieniowe: <a href="https://www.fatsecret.com" target="_blank" rel="noopener" style="color:var(--accent)">Powered by fatsecret</a></p>';
   if(G.role==='coach' && !G.preview){
-    return `<section class="card"><h3>Import z Fitatu</h3><p class="note">${auto?'Ten podopieczny ma włączony automatyczny import z Fitatu. Wpisy z importu mają w historii dopisek „Fitatu”.':'Podopieczny może włączyć automatyczny import z Fitatu w swojej aplikacji (Dieta, na dole). Działa na iPhonie.'}</p></section>`;
+    return `<section class="card"><h3>Źródło diety</h3><p class="note">${st.connected?`<b>FatSecret (automatycznie).</b> Ostatnie pobranie: ${ago||'—'}.${st.error?' Ostatni błąd: '+esc(st.error):''}`:'<b>Wpisywanie ręczne.</b> Podopieczny może połączyć FatSecret w swojej aplikacji (Dieta, na dole).'}</p>${st.connected?attrib:''}</section>`;
   }
-  const code = AUTH && AUTH.token || '';
-  return `<section class="card"><h3>Automatyczny import z Fitatu</h3>
-    ${auto?'<p class="note"><b>Import działa.</b> Dane z Fitatu przychodzą codziennie wieczorem i mają w historii dopisek „Fitatu”.</p>':''}
-    <p class="note">Działa na iPhonie: Fitatu zapisuje kalorie i makro w aplikacji Zdrowie, a skrót raz dziennie przesyła je tutaj. Konfiguracja zajmuje około 3 minut i robi się ją raz.</p>
-    <ol class="note" style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px">
-      <li>W Fitatu w ustawieniach połącz aplikację z <b>Apple Zdrowie</b> i zezwól na zapis kalorii, białka, węglowodanów i tłuszczów.</li>
-      <li>${SHORTCUT_URL?`Zainstaluj skrót: <a href="${SHORTCUT_URL}" style="color:var(--accent);font-weight:600">Dodaj skrót „Fitatu → Trening”</a>.`:'Skrót do zainstalowania udostępni Ci trener.'} Przy instalacji wklej swój kod importu (poniżej).</li>
-      <li>W aplikacji Skróty: Automatyzacja → Nowa automatyzacja → <b>Pora dnia</b>, np. 23:30, codziennie → <b>Uruchom natychmiast</b> → wybierz skrót „Fitatu → Trening”.</li>
-      <li>Przy pierwszym uruchomieniu zezwól skrótowi na odczyt danych ze Zdrowia.</li>
-    </ol>
-    <label class="field"><span class="label">Twój kod importu</span><input class="inp" id="fit-code" readonly value="${esc(code)}" style="font-size:14px"></label>
-    <button class="ghost acc" data-act="fit-copy" style="align-self:flex-start">Kopiuj kod</button>
-    <p class="note">Kod działa jak Twój osobisty link. Nie przekazuj go innym.</p></section>`;
+  fsAutoSync();
+  if(st.connected) return `<section class="card"><h3>Źródło diety: FatSecret</h3>
+    <p class="note"><b>Połączono.</b> Posiłki wpisane w FatSecret pojawiają się tu same, co kilka godzin i przy otwarciu tej zakładki. Ostatnie pobranie: ${ago||'—'}.${st.error?`<br>Ostatni błąd: ${esc(st.error)}`:''}</p>
+    <div class="ed-row"><button class="ghost acc" data-act="fs-sync" ${G.fsBusy?'disabled':''}>${G.fsBusy?'Pobieram…':'Pobierz teraz'}</button><span style="flex:1"></span>
+      <button class="ghost ${G.confirm==='fs-off'?'danger':''}" data-act="fs-off">${G.confirm==='fs-off'?'Na pewno odłączyć?':'Odłącz FatSecret'}</button></div>
+    <p class="note">Ręczne poprawki dnia mogą zostać nadpisane przy następnym pobraniu z FatSecret.</p>${attrib}</section>`;
+  return `<section class="card"><h3>Źródło diety</h3>
+    <p class="note">Masz dwie opcje:</p>
+    <p class="note"><b>1. Ręcznie.</b> Wpisujesz kalorie i makro w formularzu powyżej, np. raz dziennie wieczorem.</p>
+    <p class="note"><b>2. Automatycznie z FatSecret.</b> Wpisujesz posiłki w darmowej aplikacji FatSecret, a dieta pojawia się tu sama. Zainstaluj FatSecret (App Store lub Google Play), załóż w niej konto, a potem stuknij przycisk poniżej, zaloguj się i zatwierdź dostęp.</p>
+    <button class="primary" data-act="fs-connect">Połącz z FatSecret</button>${attrib}</section>`;
 }
 
 /* ---------- chart ---------- */
@@ -1405,7 +1420,7 @@ view.addEventListener('change', async e=>{
 view.addEventListener('click', async e=>{
   const b=e.target.closest('button[data-act]'); if(!b) return;
   const a=b.dataset.act, i=+b.dataset.i, wi=+b.dataset.wi;
-  if(!['del-session','del-meas','pk-del','bk-cancel','fin-del'].includes(a)) G.confirm=null;
+  if(!['del-session','del-meas','pk-del','bk-cancel','fin-del','fs-off'].includes(a)) G.confirm=null;
 
   if(a==='open'){ G.cid=b.dataset.id; G.coachScreen='client'; G.tab='trening'; G.wid=null; G.editPlan=null; G.editDirty=false; G.foodDate=null; G.progEx=null; subscribeClient(G.cid); render(); window.scrollTo(0,0); return; }
   if(a==='add-client'){ const inp=document.getElementById('new-client'), n=inp.value.trim(); if(!n){ toast('Wpisz imię i nazwisko'); return; }
@@ -1446,7 +1461,9 @@ view.addEventListener('click', async e=>{
   if(a==='bk-go'){ if(!G.cal.busy) await bookSlot(); return; }
   if(a==='bk-cancel'){ if(G.confirm==='bk-'+b.dataset.id){ G.confirm=null; await cancelBooking(b.dataset.id); } else { G.confirm='bk-'+b.dataset.id; render(); } return; }
   if(a==='open-me'){ openMine(); return; }
-  if(a==='fit-copy'){ const v=AUTH&&AUTH.token||''; try{ await navigator.clipboard.writeText(v); toast('Skopiowano kod'); }catch(e){ const el=document.getElementById('fit-code'); el.focus(); el.select(); toast('Zaznaczono kod, skopiuj go'); } return; }
+  if(a==='fs-connect'){ location.href = FS_FN+'?a=start&k='+encodeURIComponent(AUTH.token); return; }
+  if(a==='fs-sync'){ G.fsBusy=true; render(); try{ const j=await fsCall('sync'); toast(j.written?('Pobrano z FatSecret: '+j.written+' dni'):'Wszystko aktualne'); }catch(e){ toast(e.code==='not_configured'?'FatSecret nie jest jeszcze skonfigurowany':'Nie udało się pobrać z FatSecret'); } G.fsBusy=false; await sync(); render(); return; }
+  if(a==='fs-off'){ if(G.confirm!=='fs-off'){ G.confirm='fs-off'; render(); return; } G.confirm=null; try{ await fsCall('disconnect'); toast('Odłączono FatSecret'); }catch(e){ toast('Nie udało się odłączyć'); } await sync(); render(); return; }
   if(a==='link-show' || a==='link-renew'){
     if(a==='link-renew' && G.confirm!=='link-renew'){ G.confirm='link-renew'; render(); return; }
     G.confirm=null;
@@ -1634,7 +1651,12 @@ async function enterClient(token){
   if(!w || w.role!=='client') throw Object.assign(new Error('x'),{code:'unauthorized'});
   try{ localStorage.setItem(LS_TOKEN, token); }catch(e){}
   G.cid=w.cid; G.role='client';
+  const h=location.hash.replace('#','');
+  if(/^fs-/.test(h)){ G.tab='dieta'; try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){} }
   await sync(); derive(); afterSync(); render(); startSync();
+  if(h==='fs-ok') toast('Połączono z FatSecret. Dieta będzie pobierana automatycznie');
+  else if(h==='fs-denied') toast('Nie zatwierdzono dostępu w FatSecret');
+  else if(h==='fs-error') toast('Nie udało się połączyć z FatSecret. Spróbuj ponownie');
 }
 document.addEventListener('submit', async e=>{
   if(e.target.id!=='login-form') return; e.preventDefault();
