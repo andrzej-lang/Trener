@@ -256,9 +256,9 @@ nav.tabs.six button{font-size:10.5px;padding-inline:0}
 .goalrow{display:grid;grid-template-columns:1.3fr repeat(3,1fr);gap:8px;align-items:stretch}
 @media (max-width:420px){.goalrow{grid-template-columns:repeat(3,1fr)}.goalrow .gk{grid-column:1/-1}}
 .goalrow > div{background:var(--sunk);border-radius:12px;padding:10px 12px;display:flex;flex-direction:column;gap:2px;min-width:0}
-.goalrow .gk{background:var(--accent-soft)}
-.goalrow b{font-family:var(--f-display);font-weight:700;font-size:26px;line-height:1}
-.goalrow .gk b{font-size:32px;color:var(--accent)}
+.goalrow .gk{background:var(--good-soft)}
+.goalrow b{font-family:var(--f-display);font-weight:700;font-size:34px;line-height:1;color:var(--good);white-space:nowrap}
+.goalrow .gk b{font-size:44px}
 .goalrow small{font-size:12px;color:var(--muted)}
 .lchart{width:100%;height:auto;display:block}
 .daychips{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
@@ -1226,7 +1226,7 @@ function vDieta(){
   let h = `<section class="card"><div class="card-head"><h2>Cel dzienny</h2>${coach?'<button class="linkbtn" data-act="tab-plan">Zmień w zakładce Plan</button>':''}</div>
     ${hasGoal ? `<div class="goalrow"><div class="gk"><span class="label">Kalorie</span><b class="num">${T.kcal?(+T.kcal).toLocaleString('pl-PL'):'—'}</b><small>kcal dziennie</small></div>
       ${MACROS.map(m=>{ const g=+T[m.k]||0, pc = T.kcal && g ? Math.round(g*kcalOf[m.k]/T.kcal*100) : null;
-        return `<div><span class="label">${m.n}</span><b class="num">${g?fmtN(g):'—'}<small style="font-size:14px"> g</small></b><small>${pc!=null?pc+'% kalorii':'&nbsp;'}</small></div>`; }).join('')}</div>`
+        return `<div><span class="label">${m.n}</span><b class="num">${g?fmtN(g):'—'}<small style="font-size:16px;color:var(--good)"> g</small></b><small>${pc!=null?pc+'% kalorii':'&nbsp;'}</small></div>`; }).join('')}</div>`
       : `<p class="note">${coach?'Nie ustawiłeś jeszcze celu. Ustaw go w zakładce Plan.':'Trener nie ustawił jeszcze celu.'}</p>`}
   </section>`;
   h += `<section class="card"><div class="card-head"><h2>${date===today()?'Dzisiaj':fmtD(date)}</h2>
@@ -1245,11 +1245,14 @@ function vDieta(){
 
   const wk = weekDates(date), vals = wk.map(d=>foodDay(d)), tk=+T.kcal||0;
   const maxV = Math.max(tk*1.2, ...vals.map(v=>v&&v.kcal||0), 1);
-  const sum = vals.reduce((a,v)=>a+(v&&v.kcal||0),0), nDays = vals.filter(v=>v&&v.kcal).length;
+  const nDays = vals.filter(v=>v&&v.kcal).length;
   const sumP = vals.reduce((a,v)=>a+(v&&v.p||0),0);
+  const past = wk.map((d,i)=>d<today()?vals[i]:null).filter(v=>v&&v.kcal);
+  const avgPast = past.length ? past.reduce((a,v)=>a+v.kcal,0)/past.length : null;
+  const gap = tk && avgPast!=null ? Math.round(tk-avgPast) : null;
   h += `<section class="card"><div class="card-head"><h2>Tydzień</h2><span class="label num">${fmtD(wk[0])} – ${fmtD(wk[6])}</span></div>
-    <div class="stats"><div class="stat"><span class="label">Suma</span><span class="v num">${Math.round(sum).toLocaleString('pl-PL')}<small>kcal</small></span></div>
-      <div class="stat"><span class="label">Cel tyg.</span><span class="v num">${tk?(tk*7).toLocaleString('pl-PL'):'—'}<small>${tk?'kcal':''}</small></span></div>
+    <div class="stats"><div class="stat" style="grid-column:span 2"><span class="label">Średni cel dzienny</span><span class="v num" style="color:${gap==null?'inherit':Math.abs(gap)<=tk*0.1?'var(--good)':gap<0?'var(--warn)':'var(--accent)'}">${gap==null?'—':(gap>0?'+':'')+gap.toLocaleString('pl-PL')}<small>${gap==null?'':'kcal'}</small></span>
+        <small class="note" style="margin:0">${gap==null?(tk?'Brak wpisów z minionych dni tygodnia':'Brak celu'):`cel ${tk.toLocaleString('pl-PL')} − średnio ${Math.round(avgPast).toLocaleString('pl-PL')} kcal (${past.length} ${past.length===1?'dzień':'dni'}). ${gap>0?'Niedojedzone':gap<0?'Ponad cel':'Równo z celem'}`}</small></div>
       <div class="stat"><span class="label">Śr. białko</span><span class="v num">${nDays?fmtN(sumP/nDays):'—'}<small>g</small></span></div></div>
     <div class="week">${wk.map((d,i)=>{ const v=vals[i]&&vals[i].kcal||0; const r=tk?v/tk:0;
       return `<button class="col${d===date?' sel':''}" data-act="fpick" data-d="${d}" style="border:0;background:transparent;padding:0" aria-label="${fmtD(d)}: ${v?Math.round(v)+' kcal':'brak wpisu'}">
